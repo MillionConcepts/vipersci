@@ -193,7 +193,7 @@ class Creator:
             with self.session.begin() as s:
                 s.add(rp)
 
-        return
+        return rp
 
     def from_yamcs_parameters(self, data):
         for parameter in data.parameters:
@@ -219,7 +219,7 @@ class Creator:
             with io.BytesIO(parameter.eng_value["imageData"]) as f:
                 im = imread(f)
 
-            self.__call__(d, im)
+            return self.__call__(d, im)
 
 
 def create(
