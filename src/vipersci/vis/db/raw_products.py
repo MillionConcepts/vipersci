@@ -521,8 +521,11 @@ class RawProduct(Base):
                 d[c.name] = isozformat(getattr(self, c.name))
             else:
                 d[c.name] = getattr(self, c.name)
-
-        d.update(self.labelmeta)
+        # the SQLAlchemy metaclass constructor does not consistently call the
+        # class's __init__ method on db retrieval, so only attempt to merge
+        # labelmeta if it actually exists
+        if "labelmeta" in dir(self):
+            d.update(self.labelmeta)
 
         return d
 
