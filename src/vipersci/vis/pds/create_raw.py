@@ -40,7 +40,7 @@ from importlib import resources
 import io
 import json
 import logging
-from typing import Union, Optional
+from typing import Union, Optional, Mapping
 from pathlib import Path
 
 from genshi.template import MarkupTemplate
@@ -50,6 +50,7 @@ from skimage.io import imread, imsave  # maybe just imageio here?
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from tifftools import read_tiff
+from yamcs.tmtc.model import ParameterValue, ParameterData
 
 import vipersci
 from vipersci.vis.db.raw_products import RawProduct
@@ -59,6 +60,10 @@ from vipersci import util
 logger = logging.getLogger(__name__)
 
 ImageType = Union[npt.NDArray[np.uint16], npt.NDArray[np.uint8]]
+
+
+class NotAnImageParameter(ValueError):
+    pass
 
 
 def arg_parser():
@@ -158,7 +163,42 @@ def main():
     return
 
 
+def temp_hardcoded_header_values():
+    # These are hard-coded until we figure out where they come from.
+    return {
+        "bad_pixel_table_id": 0,
+        "hazlight_aft_port_on": False,
+        "hazlight_aft_starboard_on": False,
+        "hazlight_center_port_on": False,
+        "hazlight_center_starboard_on": False,
+        "hazlight_fore_port_on": False,
+        "hazlight_fore_starboard_on": False,
+        "navlight_left_on": False,
+        "navlight_right_on": False,
+        "mission_phase": "TEST",
+        "purpose": "Navigation",
+    }
+
+
+def unpack_image_parameter_data(parameter: Union[ParameterValue, Mapping]):
+    if not isinstance(parameter, ParameterValue):
+        get = parameter.__getitem__
+    else:
+        get = parameter.__getattribute__
+    logger.info(f"{get('generation_time')} - {get('name')}")
+    if len({'imageHeader', 'imageData'} & get("eng_value").keys()) != 2:
+        raise NotAnImageParameter
+    d = {
+        'yamcs_name': get("name"),
+        'yamcs_generation_time': get("generation_time"),
+    } | get("eng_value")['imageHeader'] | temp_hardcoded_header_values()
+    with io.BytesIO(get("eng_value")["imageData"]) as f:
+        im = imread(f)
+    return d, im
+
+
 class Creator:
+
     """
     This object can be instantiated with an output directory, *outdir*, and optional
     *session* and *template_path* directories, which the object maintains.
@@ -176,14 +216,16 @@ class Creator:
     """
 
     def __init__(
-        self,
-        outdir: Path = Path.cwd(),
-        session: Optional[Session] = None,
+            self,
+            outdir: Path = Path.cwd(),
+            session: Optional[Session] = None,
     ):
         self.outdir = outdir
         self.session = session
 
-    def __call__(self, metadata: dict, image: Union[ImageType, Path, None] = None):
+    def __call__(
+        self, metadata: dict, image: Union[ImageType, Path, None] = None
+    ) -> RawProduct:
         rp = make_raw_product(metadata, image, self.outdir)
         logger.info(f"{rp.product_id} created.")
 
@@ -195,31 +237,17 @@ class Creator:
 
         return rp
 
-    def from_yamcs_parameters(self, data):
+    def from_yamcs_parameters(self, data: ParameterData):
+        n_params = 0
         for parameter in data.parameters:
-            logger.info(f"{parameter.generation_time} - {parameter.name}")
-            # These are hard-coded until we figure out where they come from.
-            d = {
-                "bad_pixel_table_id": 0,
-                "hazlight_aft_port_on": False,
-                "hazlight_aft_starboard_on": False,
-                "hazlight_center_port_on": False,
-                "hazlight_center_starboard_on": False,
-                "hazlight_fore_port_on": False,
-                "hazlight_fore_starboard_on": False,
-                "navlight_left_on": False,
-                "navlight_right_on": False,
-                "mission_phase": "TEST",
-                "purpose": "Navigation",
-            }
-            d.update(parameter.eng_value["imageHeader"])
-            d["yamcs_name"] = parameter.name
-            d["yamcs_generation_time"] = parameter.generation_time
-
-            with io.BytesIO(parameter.eng_value["imageData"]) as f:
-                im = imread(f)
-
-            return self.__call__(d, im)
+            try:
+                d, im = unpack_image_parameter_data(parameter)
+                self.__call__(d, im)
+                n_params += 1
+            except NotAnImageParameter:
+                continue
+        if n_params == 0:
+            raise ValueError("No image values in parameter data.")
 
 
 def create(
