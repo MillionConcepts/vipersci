@@ -126,6 +126,12 @@ def arg_parser():
         "will be used as the value(s).",
     )
     parser.add_argument(
+        "--remove_facets",
+        type=float,
+        help="If provided, any facets with this value will not be included in the "
+        "output GeoPackage.  Ignored if there is more than one value_column.",
+    )
+    parser.add_argument(
         "--replace_with_zero",
         help="If there is a value that should be replaced with zero, it can "
         "be provided here.  If the --value_name is 'Depth (m)' this will "
@@ -207,6 +213,10 @@ def main():
         logger.info(f"Reading vertices from {args.file}")
         for line in f:
             tokens = line.split()
+
+            if len(col_idxs) == 1 and float(tokens[col_idxs[0]]) == args.remove_facets:
+                continue
+
             poly = vertexes_to_poly(transformer, tokens[:9], args.keep_z)
             polys.append(poly)
 
@@ -233,6 +243,7 @@ def main():
 
     values["geometry"] = polys
     gdf = geopandas.GeoDataFrame(values, crs=t_crs)
+    logger.info(gdf.describe())
 
     if not args.keep_all_facets:
         logger.info("Dissolving polygons.")
@@ -287,6 +298,9 @@ def vertexes_to_poly(transformer, tokens: list, z=True):
         poly = Polygon([v1, v2, v3])
     else:
         poly = Polygon([v1[:-1], v2[:-1], v3[:-1]])
+
+    if poly.area == 0:
+        raise ValueError(f"This polygon has zero area: {poly}")
 
     return poly
 

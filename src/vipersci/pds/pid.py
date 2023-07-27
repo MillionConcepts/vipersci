@@ -36,6 +36,7 @@ vis_instruments = dict(
     has="HazCam Aft Starboard",
     acl="AftCam Left",
     acr="AftCam Right",
+    pan="Panorama",  # Not an instrument, but a valid combined product type.
 )
 vis_instrument_aliases = {
     "navcam left": "ncl",
@@ -50,14 +51,29 @@ vis_instrument_aliases = {
     "hazcam front right": "hfs",
     "hazcam back left": "hap",
     "hazcam back right": "has",
+    "hazcam_1": "hfp",
+    "hazcam_2": "hap",
+    "hazcam_3": "hfs",
+    "hazcam_4": "has",
+}
+vis_instrument_numbers = {
+    0: "ncl",
+    1: "ncr",
+    2: "acl",
+    3: "acr",
+    4: "hfp",
+    5: "hfs",
+    6: "hap",
+    7: "has",
 }
 instruments.update(vis_instruments)
 vis_compression = dict(
-    a=None,  # Lossless compression
+    a=1,  # 1:1 Lossless compression
     b=5,  # 5:1 compression
     c=16,  # 16:1 compression
     d=64,  # 64:1 compression
     s="SLoG",  # SLoG compression
+    z=None,  # Uncompressed
 )
 
 nirvss_instruments = dict(
@@ -69,6 +85,7 @@ instruments.update(nirvss_instruments)
 date_re = re.compile(r"(2\d)(1[0-2]|0[1-9])(3[01]|[12][0-9]|0[1-9])")  # YYMMDD
 time_re = re.compile(r"(2[0-3]|[01]\d)([0-5]\d)([0-5]\d)(\d{3})?")  # hhmmssfff
 inst_re = re.compile("|".join(instruments.keys()))
+vis_inst_re = re.compile("|".join(vis_instruments.keys()))
 
 pid_re = re.compile(
     rf"(?P<date>{date_re.pattern})-"
@@ -78,6 +95,12 @@ pid_re = re.compile(
 
 vis_comp_re = re.compile("|".join(vis_compression.keys()))
 vis_pid_re = re.compile(pid_re.pattern + rf"-(?P<compression>{vis_comp_re.pattern})")
+vis_pan_re = re.compile(
+    f"(?P<date>{date_re.pattern})-"
+    rf"(?P<time>{time_re.pattern})-"
+    rf"((?P<instrument>{vis_inst_re.pattern})-)?"
+    rf"pan"
+)
 
 
 def get_key(value, dictionary):
@@ -168,6 +191,9 @@ class VIPERID:
                 and self.instrument == other.instrument
             )
         return False
+
+    def __hash__(self):
+        return hash((self.date, self.time, self.instrument))
 
     def __lt__(self, other):
         if isinstance(other, self.__class__):
@@ -289,12 +315,7 @@ class VISID(VIPERID):
         else:
             raise IndexError("accepts 1 or 4 arguments")
 
-        if instrument in vis_instruments:
-            pass
-        elif instrument.casefold() in vis_instrument_aliases:
-            instrument = vis_instrument_aliases[instrument.casefold()]
-        else:
-            raise ValueError(f"{instrument} is not a VIS instrument.")
+        instrument = self.instrument_name(instrument)
 
         if compression in vis_compression:
             pass
@@ -314,6 +335,9 @@ class VISID(VIPERID):
             return super().__eq__(other) and self.compression == other.compression
         return False
 
+    def __hash__(self):
+        return hash((super().__hash__(), self.compression))
+
     def __lt__(self, other):
         if isinstance(other, self.__class__):
             if super().__eq__(other):
@@ -326,12 +350,14 @@ class VISID(VIPERID):
     @staticmethod
     def instrument_name(name):
         """Returns fullname of VIS instrument based on *name*."""
+        if isinstance(name, int):
+            return vis_instruments[vis_instrument_numbers[name]]
         if name.casefold() in vis_instruments:
             return vis_instruments[name.casefold()]
         elif name.casefold() in vis_instrument_aliases:
             return vis_instruments[vis_instrument_aliases[name.casefold()]]
         else:
-            raise ValueError(f"No instrument name based on {name} could be found.")
+            raise ValueError(f"No VIS instrument name based on {name} could be found.")
 
     def compression_class(self):
         """Returns text value for the PDS onboard_compression_class."""
@@ -339,3 +365,37 @@ class VISID(VIPERID):
             return "Lossless"
         else:
             return "Lossy"
+
+
+class PanoID(VIPERID):
+    """A Class for VIPER VIS Panorama Product IDs.  The date/time combination
+       should be equal to the earliest source product date/time combination.
+
+    :ivar date: a six digit string denoting YYMMDD (or strftime %y%m%d) where
+        the two digit year can be prefixed with "20" to get the four-digit year.
+    :ivar time: a six or nine digit string denoting hhmmss (or strftime
+        %H%M%S%f) or hhmmssuuu, similar to the first, but where the trailing
+        three digits are miliseconds.
+    :ivar instrument: A three character sequence denoting the instrument (if all
+        source data came from the same instrument), can be None (indicating multiple
+        instruments contributed).
+    """
+
+    def __init__(self, *args):
+        if len(args) == 1:
+            match = vis_pan_re.search(str(args).lower())
+            if not match:
+                raise ValueError(f"{args} did not match regex: {vis_pan_re.pattern}")
+        elif 2 <= len(args) <= 3:
+            instrument = args[-1]
+            VISID.instrument_name(instrument)
+
+        super().__init__(*args)
+        if self.instrument == "pan":
+            self.instrument = None
+
+    def __str__(self):
+        if self.instrument in ("pan", None):
+            return "-".join((self.date, self.time, "pan"))
+        else:
+            return "-".join((self.date, self.time, self.instrument, "pan"))

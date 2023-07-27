@@ -28,10 +28,18 @@ and the release date, in year-month-day format (see examples below).
 Unreleased
 ----------
 
+
+0.5.0 (2023-07-26)
+------------------
+
 Added
 ^^^^^
+- PanoID class added to pds.pid
+- pano_products and create_pano added, still very preliminary, mostly just mock-ups.
+- colorforge program for managing colormaps.
 - mypy is now in the development dependencies to support type checking.
 - lint/mypy target added to Makefile.
+- tri2gpkg now has a --remove_facets option to remove facets with a particular value.
 
 
 Changed
@@ -39,7 +47,18 @@ Changed
 - Explicit in documentation about developing in Python 3.8 (although earlier versions
   should still be supported).
 - Many changes to improve type checking.
+- Added numeric instrument aliases and checking for them.
+- Added information for procesingInfo and outputMask from Yamcs.
 - Upgrade to SQLAlchemy >=2.
+- Moved definition of Base class up to vis.db.
+- heatmaps.py will now accept value data lists or arrays with np.nan or None values
+  which will be appropriate ignored in the density heatmap calculation.
+
+
+Fixed
+^^^^^
+- tri2gpkg - if the provided polygons have zero area, issue an error rather than
+  making a confusing GeoPackage file.
 
 
 

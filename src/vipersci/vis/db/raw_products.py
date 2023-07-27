@@ -26,6 +26,7 @@
 # top level of this library.
 
 from datetime import datetime, timedelta, timezone
+from enum import Flag
 from warnings import warn
 import xml.etree.ElementTree as ET
 
@@ -38,12 +39,14 @@ from sqlalchemy import (
     String,
 )
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import DeclarativeBase, mapped_column, synonym, validates
+from sqlalchemy.orm import mapped_column, synonym, validates
 
 from vipersci.pds.pid import VISID, vis_instruments, vis_compression
 from vipersci.pds.xml import ns
 from vipersci.pds.datetime import fromisozformat, isozformat
 from vipersci.vis.header import pga_gain as header_pga_gain
+from vipersci.vis.db import Base
+import vipersci.vis.db.validators as vld
 
 
 luminaire_names = {
@@ -58,8 +61,28 @@ luminaire_names = {
 }
 
 
-class Base(DeclarativeBase):
-    pass
+class ImageType(Flag):
+    """This Flag class can be used to interpret the outputImageMask but not the
+    immediateDownloadInfo Yamcs parameters, because only a single flag value can
+    be set."""
+
+    LOSSLESS_ICER_IMAGE = 1
+    # RESERVED_2 = 2
+    # RESERVED_4 = 4
+    LOSSY_ICER_IMAGE = 8
+    SLOG_ICER_IMAGE = 16
+
+    @classmethod
+    def _missing_(cls, value):
+        return None
+
+
+class ProcessingStage(Flag):
+    # PROCESS_RESERVED = 1
+    PROCESS_FLATFIELD = 2
+    # PROCESS_RESERVED_2 = 4
+    PROCESS_LINEARIZATION = 8
+    PROCESS_SLOG = 16
 
 
 class RawProduct(Base):
@@ -101,9 +124,6 @@ class RawProduct(Base):
         # image.  It is not clear how to obtain this information from Yamcs,
         # or even what might be recorded, so this column's value is TBD.
     )
-    cameraId = synonym(
-        "mcam_id"
-    )  # This value maybe isn't the mcam_id since it is 0-7 from Yamcs?
     capture_id = mapped_column(
         Integer,
         nullable=False,
@@ -174,9 +194,7 @@ class RawProduct(Base):
         nullable=False,
         doc="The TIME_TAG from the MCSE Image Header.",
     )
-    mcam_id = mapped_column(
-        Integer, nullable=False, doc="The MCAM_ID from the MCSE Image Header."
-    )
+    # mcam_id, The MCAM_ID from the MCSE Image Header is not returned to the ground.
     mission_phase = mapped_column(
         String,
         nullable=False,
@@ -202,17 +220,14 @@ class RawProduct(Base):
     output_image_mask = mapped_column(
         Integer,
         nullable=False,
-        doc="The outputImageMask from the Yamcs imageHeader."
-        # TODO: learn more about outputImageMask to provide better doc here.
+        doc="The outputImageMask from the Yamcs imageHeader.  For each downlinked "
+        "image this can be exactly one value of the ImageType class.  This value "
+        "indicates whether the image is SLoG or not, and what level of compression "
+        "has been set.",
     )
-    output_image_type = mapped_column(
-        String,
-        nullable=False,
-        doc="The outputImageType from the Yamcs imageHeader."
-        # TODO: learn more about outputImageType to provide better doc here.
-    )
+    # outputImageType is redundant with the outputImageMask, as it is just the
+    # longform name of the value specified in the outputImageMask.
     outputImageMask = synonym("output_image_mask")
-    outputImageType = synonym("output_image_type")
     _pid = mapped_column(
         "product_id", String, nullable=False, unique=True, doc="The PDS Product ID."
     )
@@ -232,8 +247,9 @@ class RawProduct(Base):
     processing_info = mapped_column(
         Integer,
         nullable=False,
-        doc="The processingInfo parameter from the Yamcs imageHeader."
-        # TODO: learn more about processingInfo to provide better doc here.
+        doc="The processingInfo parameter from the Yamcs imageHeader. This integer "
+        "value must correspond to a valid value of ProcessingStage, and indicates "
+        "what onboard processing occurred.",
     )
     processingInfo = synonym("processing_info")
     purpose = mapped_column(
@@ -343,9 +359,51 @@ class RawProduct(Base):
 
             self.instrument_name = VISID.instrument_name(maybe_name)
 
+        if "cameraId" in otherargs:
+            if VISID.instrument_name(otherargs["cameraId"]) != self.instrument_name:
+                warn(
+                    f"cameraId ({otherargs['cameraId']}) does not match the "
+                    f"instrument_name ({self.instrument_name})."
+                )
+
         # Derive slog, if possible.
-        if "slog" not in kwargs and "yamcs_name" in kwargs:
-            self.slog = self.yamcs_name.endswith("slog")
+        if self.processing_info is not None:
+            try:
+                if "slog" in kwargs:
+                    # check against processing_info
+                    if kwargs[
+                        "slog"
+                    ] and ProcessingStage.PROCESS_SLOG not in ProcessingStage(
+                        self.processing_info
+                    ):
+                        warn(
+                            "slog is True, but ProcessingStage.PROCESS_SLOG not "
+                            f"in {ProcessingStage(self.processing_info)}"
+                        )
+
+                    if not kwargs[
+                        "slog"
+                    ] and ProcessingStage.PROCESS_SLOG in ProcessingStage(
+                        self.processing_info
+                    ):
+                        warn(
+                            "slog is False, but ProcessingStage.PROCESS_SLOG "
+                            f"in {ProcessingStage(self.processing_info)}"
+                        )
+                else:
+                    if ProcessingStage.PROCESS_SLOG in ProcessingStage(
+                        self.processing_info
+                    ):
+                        self.slog = True
+                    else:
+                        self.slog = False
+            except ValueError as err:
+                warn(str(err))
+                if "slog" not in kwargs and "yamcs_name" in kwargs:
+                    self.slog = self.yamcs_name.endswith("slog")
+        else:
+            if "slog" not in kwargs and "yamcs_name" in kwargs:
+                self.slog = self.yamcs_name.endswith("slog")
 
         # Ensure product_id consistency
         if pid:
@@ -467,14 +525,6 @@ class RawProduct(Base):
     def validate_pga_gain(self, key, value):
         return header_pga_gain(value)
 
-    @validates("mcam_id")
-    def validate_mcam_id(self, key, value: int):
-        s = {0, 1, 2, 3, 4}
-        if value not in s:
-            # raise ValueError(f"mcam_id must be one of {s}, but is {value}")
-            warn(f"mcam_id must be one of {s}, but is {value}")
-        return value
-
     @validates(
         "file_creation_datetime",
         "start_time",
@@ -482,36 +532,29 @@ class RawProduct(Base):
         "yamcs_generation_time",
     )
     def validate_datetime_asutc(self, key, value):
-        if isinstance(value, datetime):
-            if value.utcoffset() is None:
-                raise ValueError(f"{key} must be tz aware.")
-            dt = value
-        elif isinstance(value, str):
-            if value.endswith("Z"):
-                dt = fromisozformat(value)
-            else:
-                dt = datetime.fromisoformat(value)
-        else:
-            raise ValueError(
-                f"{key} must be a datetime or an ISO 8601 formatted string."
-            )
+        return vld.validate_datetime_asutc(key, value)
 
-        return dt.astimezone(timezone.utc)
+    @validates("output_image_mask")
+    def validate_output_image_mask(self, key, value):
+        try:
+            ImageType(value)
+        except ValueError:
+            warn(f"{key} ({value}) is not one of {list(ImageType)}")
+
+        return value
+
+    @validates("processing_info")
+    def validate_processing_info(self, key, value):
+        try:
+            ProcessingStage(value)
+        except ValueError:
+            warn(f"{key} ({value}) is not one of {list(ProcessingStage)}")
+
+        return value
 
     @validates("purpose")
     def validate_purpose(self, key, value: str):
-        s = {
-            "Calibration",
-            "Checkout",
-            "Engineering",
-            "Navigation",
-            "Observation Geometry",
-            "Science",
-            "Supporting Observation",
-        }
-        if value not in s:
-            raise ValueError(f"purpose must be one of {s}")
-        return value
+        return vld.validate_purpose(value)
 
     def asdict(self):
         d = {}
@@ -646,7 +689,7 @@ class RawProduct(Base):
             inst_lid=f"{_sclid}.{_inst}",
             gain_number=(self.adc_gain * self.pga_gain),
             exposure_type="Auto" if self.auto_exposure else "Manual",
-            image_filter=None,
+            image_filters=list(),
             led_wavelength=453,  # nm
             luminaires={},
             compression_class=pid.compression_class(),
@@ -657,10 +700,16 @@ class RawProduct(Base):
         for k, v in luminaire_names.items():
             d["luminaires"][k] = onoff[getattr(self, v)]
 
+        proc_info = ProcessingStage(self.processing_info)
+        if ProcessingStage.PROCESS_FLATFIELD in proc_info:
+            d["image_filters"].append(("Onboard", "Flat field normalization."))
+
+        if ProcessingStage.PROCESS_LINEARIZATION in proc_info:
+            d["image_filters"].append(("Onboard", "Linearization."))
+
         if self.slog:
-            d["image_filter"] = dict(
-                processing_venue="Onboard",
-                processing_algorithm="Sign of the Laplacian of the Gaussian, SLoG",
+            d["image_filters"].append(
+                ("Onboard", "Sign of the Laplacian of the Gaussian, SLoG")
             )
             d["sample_bits"] = 8
             d["sample_bit_mask"] = "2#11111111"

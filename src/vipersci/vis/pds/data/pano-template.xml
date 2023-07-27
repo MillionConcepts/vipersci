@@ -23,7 +23,7 @@
   <Identification_Area>
     <logical_identifier>${lid}</logical_identifier>
     <version_id>${vid}</version_id>
-    <title>VIPER Visible Imaging System ${instrument_name} image - ${product_id}</title>
+    <title>VIPER Visible Imaging System Panorama - ${product_id}</title>
     <information_model_version>1.18.0.0</information_model_version>
     <product_class>Product_Observational</product_class>
     <Modification_History>
@@ -41,7 +41,7 @@
     </Time_Coordinates>
     <Primary_Result_Summary>
       <purpose>${purpose}</purpose>
-      <processing_level>Raw</processing_level>
+      <processing_level>Derived</processing_level>
     </Primary_Result_Summary>
     <Investigation_Area>
       <name>VIPER</name>
@@ -60,11 +60,11 @@
 			<reference_type>is_instrument_host</reference_type>
 		</Internal_Reference>
       </Observing_System_Component>
-      <Observing_System_Component>
-        <name>${instrument_name}</name>
+      <Observing_System_Component py:for="inst in instruments">
+        <name>${inst.name}</name>
         <type>Instrument</type>
         <Internal_Reference>
-			<lid_reference>${inst_lid}</lid_reference>
+			<lid_reference>${inst.lid}</lid_reference>
 			<reference_type>is_instrument</reference_type>
 		</Internal_Reference>
       </Observing_System_Component>
@@ -95,48 +95,6 @@
 				<local_identifier_reference>image2d</local_identifier_reference>
 				<local_reference_type>imaging_parameters_to_image_object</local_reference_type>
 			</Local_Internal_Reference>
-    		<img:Detector>
-				<img:first_line>1</img:first_line>
-				<img:first_sample>1</img:first_sample>
-				<img:lines>2048</img:lines>
-				<img:samples>2048</img:samples>
-                <img:gain_number>${gain_number}</img:gain_number>
-				<img:analog_offset>${offset}</img:analog_offset>
-				<img:bad_pixel_replacement_table_id>${bad_pixel_table_id}</img:bad_pixel_replacement_table_id>
-			</img:Detector>
-			<img:Exposure>
-				<img:exposure_duration unit="microseconds">${exposure_duration}</img:exposure_duration>
-    			<img:exposure_type>${exposure_type}</img:exposure_type>
-    		</img:Exposure>
-			<img:Illumination>
-				<img:LED_Illumination_Source py:for="ledname, ledstate in luminaires.items()">
-					<img:name>${ledname}</img:name>
-					<img:illumination_state>${ledstate}</img:illumination_state>
-					<img:illumination_wavelength unit="nm">${led_wavelength}</img:illumination_wavelength>
-				</img:LED_Illumination_Source>
-			</img:Illumination>
-            <img:Image_Filter py:for="venue, algorithm in image_filters">
-                <img:processing_venue>${venue}</img:processing_venue>
-                <img:processing_algorithm>${algorithm}</img:processing_algorithm>
-            </img:Image_Filter>
-			<img:Onboard_Compression>
-				<img:onboard_compression_class>${compression_class}</img:onboard_compression_class>
-				<img:onboard_compression_type>${onboard_compression_type}</img:onboard_compression_type>
-                <img:onboard_compression_ratio py:if="compression_class == 'Lossy'">${onboard_compression_ratio}</img:onboard_compression_ratio>
-			</img:Onboard_Compression>
-			<img:Sampling>
-				<img:original_sample_bits>12</img:original_sample_bits>
-                <img:sample_bits>${sample_bits}</img:sample_bits>
-				<img:sample_bit_mask>${sample_bit_mask}</img:sample_bit_mask>
-			</img:Sampling>
-			<img:Instrument_State>
-				<img:Device_Temperatures>
-					<img:Device_Temperature>
-						<img:device_name>${instrument_name}</img:device_name>
-						<img:temperature_value unit="K">${instrument_temperature}</img:temperature_value>
-					</img:Device_Temperature>
-				</img:Device_Temperatures>
-			</img:Instrument_State>
     	</img:Imaging>
     	<msn:Mission_Information>
     		<msn:mission_phase_name>${mission_phase}</msn:mission_phase_name>
@@ -161,6 +119,12 @@
     	</proc:Processing_Information>
     </Discipline_Area>
   </Observation_Area>
+  <Reference_List>
+      <Source_Product_Internal py:for="lidvid in source_product_lidvids">
+          <lidvid_reference>${lidvid}</lidvid_reference>
+          <reference_type>${source_product_type}</reference_type>
+      </Source_Product_Internal>
+  </Reference_List>
   <File_Area_Observational>
     <File>
       <file_name>${file_path}</file_name>

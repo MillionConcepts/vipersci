@@ -254,7 +254,7 @@ def create(
     metadata: dict,
     image: Union[ImageType, Path, None] = None,
     outdir: Path = Path.cwd(),
-    session: Union[Session, sessionmaker, None] = None,
+    session: Optional[Session] = None,
     json: bool = True,
     xml: bool = False,
     template_path: Optional[Path] = None,
@@ -300,7 +300,7 @@ def create(
         with session.begin() as s:
             s.add(rp)
 
-    return
+    return rp
 
 
 def check_bit_depth(pid: pds.VISID, bit_depth: Union[int, str, np.dtype]):
